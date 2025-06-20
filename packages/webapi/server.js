@@ -7,7 +7,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import ModelClient from "@azure-rest/ai-inference";
-import { AzureChatOpenAI } from "@langchain/azure-openai";
+import { AzureChatOpenAI } from "@langchain/openai";
 import { BufferMemory } from "langchain/memory";
 import { ChatMessageHistory } from "langchain/stores/message/in_memory";
 
