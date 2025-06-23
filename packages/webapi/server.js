@@ -6,18 +6,20 @@ import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import ModelClient from "@azure-rest/ai-inference";
 import { AzureChatOpenAI } from "@langchain/openai";
 import { BufferMemory } from "langchain/memory";
 import { ChatMessageHistory } from "langchain/stores/message/in_memory";
+import { AgentService } from "./agentService.js";
+
+const sessionMemories = {};
+
+const agentService = new AgentService();
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-const sessionMemories = {};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,16 +28,13 @@ const pdfPath = path.join(projectRoot, "data/employee_handbook.pdf"); // Update 
 
 const chatModel = new AzureChatOpenAI({
   azureOpenAIApiKey: process.env.AZURE_INFERENCE_SDK_KEY,
-  azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_INSTANCE_NAME, // Ensure this is set correctly
-  azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_DEPLOYMENT, // i.e "gpt-4o"
-  azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION, // Use the updated version
+  azureOpenAIApiInstanceName: process.env.INSTANCE_NAME, // In target url: https://<INSTANCE_NAME>.services...
+  azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
+
+  azureOpenAIApiVersion: "2024-08-01-preview", // In target url: ...<VERSION>
   temperature: 1,
   maxTokens: 4096,
 });
-
-const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4o"; // Set your deployment name in .env
-const AZURE_OPENAI_API_VERSION =
-  process.env.AZURE_OPENAI_API_VERSION || "2024-02-15-preview";
 
 let pdfText = null;
 let pdfChunks = [];
@@ -64,18 +63,6 @@ async function loadPDF() {
   return pdfText;
 }
 
-function getSessionMemory(sessionId) {
-  if (!sessionMemories[sessionId]) {
-    const history = new ChatMessageHistory();
-    sessionMemories[sessionId] = new BufferMemory({
-      chatHistory: history,
-      returnMessages: true,
-      memoryKey: "chat_history",
-    });
-  }
-  return sessionMemories[sessionId];
-}
-
 function retrieveRelevantContent(query) {
   const queryTerms = query
     .toLowerCase()
@@ -99,6 +86,18 @@ function retrieveRelevantContent(query) {
     .sort((a, b) => b.score - a.score)
     .slice(0, 3)
     .map((item) => item.chunk);
+}
+
+function getSessionMemory(sessionId) {
+  if (!sessionMemories[sessionId]) {
+    const history = new ChatMessageHistory();
+    sessionMemories[sessionId] = new BufferMemory({
+      chatHistory: history,
+      returnMessages: true,
+      memoryKey: "chat_history",
+    });
+  }
+  return sessionMemories[sessionId];
 }
 
 app.post("/chat", async (req, res) => {
@@ -134,6 +133,19 @@ app.post("/chat", async (req, res) => {
       };
 
   try {
+    const mode = req.body.mode || "basic";
+
+    // If agent mode is selected, route to agent service
+    if (mode === "agent") {
+      const agentResponse = await agentService.processMessage(
+        sessionId,
+        userMessage
+      );
+      return res.json({
+        reply: agentResponse.reply,
+        sources: [],
+      });
+    }
     // Build final messages array
     const messages = [
       systemMessage,
